@@ -1,0 +1,71 @@
+# # Core web framework
+# streamlit==1.28.1
+
+# # Data processing
+# pandas==2.1.3
+# numpy==1.25.2
+# yfinance==0.2.22
+
+# # Scientific computing (required for technical analysis)
+# scipy==1.11.4
+
+# # Machine Learning & AI
+# transformers==4.35.2
+# sentence-transformers==2.2.2
+# faiss-cpu==1.7.4
+
+# # Technical analysis
+# ta==0.10.2
+
+# # Visualization
+# plotly==5.17.0
+
+# # Web scraping and RSS feeds
+# beautifulsoup4==4.12.2
+# requests==2.31.0
+# feedparser==3.9.0
+
+# # Environment management
+# python-dotenv==1.0.0
+
+# # Date handling
+# python-dateutil==2.8.2
+
+# # For future LLM integration (optional)
+# openai==1.3.7
+
+# Core web framework
+streamlit==1.28.1
+
+# Data processing
+pandas==2.1.3
+numpy==1.25.2
+yfinance==0.2.22
+
+# Machine Learning & AI (lightweight versions)
+transformers==4.35.2
+sentence-transformers==2.2.2
+faiss-cpu==1.7.4
+
+# Technical analysis
+ta==0.10.2
+
+# Visualization
+plotly==5.17.0
+
+# Web scraping and RSS feeds
+beautifulsoup4==4.12.2
+requests==2.31.0
+feedparser==6.0.10
+
+# Environment management
+python-dotenv==1.0.0
+
+# Date handling
+python-dateutil==2.8.2
+
+# For future LLM integration (optional)
+openai==1.3.7
+
+# NOTE: scipy removed temporarily due to Windows memory issues
+# Install separately if needed: pip install scipy
