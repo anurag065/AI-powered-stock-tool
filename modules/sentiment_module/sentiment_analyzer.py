@@ -200,7 +200,7 @@ class SentimentAnalyzer:
         """Parse date string from RSS feed"""
         if not date_str:
             return None
-        
+
         try:
             # Try different date formats
             formats = [
@@ -209,17 +209,26 @@ class SentimentAnalyzer:
                 '%Y-%m-%dT%H:%M:%SZ',
                 '%Y-%m-%d %H:%M:%S'
             ]
-            
+
+            parsed_date = None
             for fmt in formats:
                 try:
-                    return datetime.strptime(date_str, fmt)
+                    parsed_date = datetime.strptime(date_str, fmt)
+                    break
                 except ValueError:
                     continue
-            
-            # If all formats fail, return current time
-            logger.warning(f"Could not parse date: {date_str}")
-            return datetime.now()
-            
+
+            if parsed_date is None:
+                # If all formats fail, return current time
+                logger.warning(f"Could not parse date: {date_str}")
+                return datetime.now()
+
+            # Remove timezone info to make it timezone-naive
+            if parsed_date.tzinfo is not None:
+                parsed_date = parsed_date.replace(tzinfo=None)
+
+            return parsed_date
+
         except Exception as e:
             logger.warning(f"Error parsing date {date_str}: {str(e)}")
             return datetime.now()
