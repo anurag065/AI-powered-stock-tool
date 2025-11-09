@@ -1,10 +1,18 @@
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import ta
 import logging
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.append(str(Path(__file__).parent.parent))
+try:
+    from data_module.data_fetcher import DataFetcher
+except ImportError:
+    from ..data_module.data_fetcher import DataFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -12,10 +20,11 @@ class TechnicalAnalysis:
     """
     Technical Analysis module for creating indicator dashboard
     Implements SMA (50/200), RSI, MACD, and Bollinger Bands
+    Uses DataFetcher (Twelve Data + Finnhub) for price data
     """
-    
+
     def __init__(self):
-        pass
+        self.data_fetcher = DataFetcher()
     
     def calculate_indicators(self, ticker, period="3mo"):
         """
@@ -23,10 +32,9 @@ class TechnicalAnalysis:
         Returns dictionary with indicator values and charts
         """
         try:
-            # Fetch stock data
-            stock = yf.Ticker(ticker)
-            data = stock.history(period=period)
-            
+            # Fetch stock data using DataFetcher (Twelve Data + Finnhub hybrid)
+            data = self.data_fetcher.get_stock_data(ticker, period=period)
+
             if data.empty:
                 logger.warning(f"No data available for {ticker}")
                 return None
@@ -309,9 +317,9 @@ class TechnicalAnalysis:
         Identify potential support and resistance levels
         """
         try:
-            stock = yf.Ticker(ticker)
-            data = stock.history(period=period)
-            
+            # Fetch stock data using DataFetcher (Twelve Data + Finnhub hybrid)
+            data = self.data_fetcher.get_stock_data(ticker, period=period)
+
             if data.empty:
                 return None
             
