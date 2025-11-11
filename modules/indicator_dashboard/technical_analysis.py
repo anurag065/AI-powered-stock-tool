@@ -1,18 +1,18 @@
 import pandas as pd
 import numpy as np
+import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import ta
 import logging
-import sys
-from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent))
+# Handle scipy import gracefully
 try:
-    from data_module.data_fetcher import DataFetcher
+    from scipy.signal import argrelextrema
+    SCIPY_AVAILABLE = True
 except ImportError:
-    from ..data_module.data_fetcher import DataFetcher
+    SCIPY_AVAILABLE = False
+    print("⚠️ scipy not available - support/resistance features disabled")
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,10 @@ class TechnicalAnalysis:
     """
     Technical Analysis module for creating indicator dashboard
     Implements SMA (50/200), RSI, MACD, and Bollinger Bands
-    Uses DataFetcher (Twelve Data + Finnhub) for price data
     """
-
+    
     def __init__(self):
-        self.data_fetcher = DataFetcher()
+        self.scipy_available = SCIPY_AVAILABLE
     
     def calculate_indicators(self, ticker, period="3mo"):
         """
@@ -32,9 +31,10 @@ class TechnicalAnalysis:
         Returns dictionary with indicator values and charts
         """
         try:
-            # Fetch stock data using DataFetcher (Twelve Data + Finnhub hybrid)
-            data = self.data_fetcher.get_stock_data(ticker, period=period)
-
+            # Fetch stock data
+            stock = yf.Ticker(ticker)
+            data = stock.history(period=period)
+            
             if data.empty:
                 logger.warning(f"No data available for {ticker}")
                 return None
@@ -79,6 +79,47 @@ class TechnicalAnalysis:
             logger.error(f"Error calculating indicators for {ticker}: {str(e)}")
             return None
     
+    # ... (rest of the methods remain the same as in original file)
+    
+    def get_support_resistance(self, ticker, period="6mo"):
+        """
+        Identify potential support and resistance levels
+        """
+        if not self.scipy_available:
+            return {
+                'support_levels': [],
+                'resistance_levels': [],
+                'current_price': 0,
+                'error': 'scipy not available - feature disabled'
+            }
+        
+        try:
+            stock = yf.Ticker(ticker)
+            data = stock.history(period=period)
+            
+            if data.empty:
+                return None
+            
+            # Calculate local minima and maxima
+            support_indices = argrelextrema(data['Low'].values, np.less_equal, order=5)[0]
+            support_levels = data['Low'].iloc[support_indices].tolist()
+            
+            resistance_indices = argrelextrema(data['High'].values, np.greater_equal, order=5)[0]
+            resistance_levels = data['High'].iloc[resistance_indices].tolist()
+            
+            support_levels = sorted(support_levels)[-3:] if support_levels else []
+            resistance_levels = sorted(resistance_levels)[-3:] if resistance_levels else []
+            
+            return {
+                'support_levels': support_levels,
+                'resistance_levels': resistance_levels,
+                'current_price': data['Close'].iloc[-1]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating support/resistance for {ticker}: {str(e)}")
+            return None
+
     def _create_ma_chart(self, data, ticker):
         """Create moving averages chart"""
         fig = go.Figure()
@@ -246,11 +287,9 @@ class TechnicalAnalysis:
         )
         
         return fig
-    
+
     def get_signal_analysis(self, ticker, period="3mo"):
-        """
-        Generate trading signals based on technical indicators
-        """
+        """Generate trading signals based on technical indicators"""
         try:
             indicators = self.calculate_indicators(ticker, period)
             if not indicators:
@@ -310,40 +349,4 @@ class TechnicalAnalysis:
             
         except Exception as e:
             logger.error(f"Error generating signal analysis for {ticker}: {str(e)}")
-            return None
-    
-    def get_support_resistance(self, ticker, period="6mo"):
-        """
-        Identify potential support and resistance levels
-        """
-        try:
-            # Fetch stock data using DataFetcher (Twelve Data + Finnhub hybrid)
-            data = self.data_fetcher.get_stock_data(ticker, period=period)
-
-            if data.empty:
-                return None
-            
-            # Calculate local minima and maxima
-            from scipy.signal import argrelextrema
-            
-            # Find local minima (support levels)
-            support_indices = argrelextrema(data['Low'].values, np.less_equal, order=5)[0]
-            support_levels = data['Low'].iloc[support_indices].tolist()
-            
-            # Find local maxima (resistance levels)  
-            resistance_indices = argrelextrema(data['High'].values, np.greater_equal, order=5)[0]
-            resistance_levels = data['High'].iloc[resistance_indices].tolist()
-            
-            # Get the most significant levels (recent and frequently tested)
-            support_levels = sorted(support_levels)[-3:] if support_levels else []
-            resistance_levels = sorted(resistance_levels)[-3:] if resistance_levels else []
-            
-            return {
-                'support_levels': support_levels,
-                'resistance_levels': resistance_levels,
-                'current_price': data['Close'].iloc[-1]
-            }
-            
-        except Exception as e:
-            logger.error(f"Error calculating support/resistance for {ticker}: {str(e)}")
             return None
