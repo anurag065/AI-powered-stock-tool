@@ -775,6 +775,15 @@ class DataFetcher:
                 cached_data.set_index('date', inplace=True)
                 cached_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
 
+                # Rename columns to match standard format (capitalize first letter)
+                cached_data = cached_data.rename(columns={
+                    'open': 'Open',
+                    'high': 'High',
+                    'low': 'Low',
+                    'close': 'Close',
+                    'volume': 'Volume'
+                })
+
                 # Check if data is recent enough
                 latest_date = cached_data.index.max()
                 if latest_date.date() >= (datetime.now() - timedelta(days=1)).date():

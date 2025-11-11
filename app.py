@@ -90,7 +90,10 @@ def main():
             with tab4:
                 st.header("🤖 AI-Powered Q&A Chatbot")
                 display_chatbot(ticker)
-                
+
+            # Handle chat input outside of tabs (required by Streamlit)
+            handle_chat_input(ticker)
+
         except Exception as e:
             st.error(f"Error loading data for {ticker}: {str(e)}")
             st.info("Please check if the ticker symbol is valid.")
@@ -638,14 +641,31 @@ def display_chatbot(ticker):
             st.session_state.chat_history = []
         
         # Display chat history
-        for message in st.session_state.chat_history:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-        
-        # Chat input
+        chat_container = st.container()
+        with chat_container:
+            for message in st.session_state.chat_history:
+                with st.chat_message(message["role"]):
+                    st.write(message["content"])
+
+    except Exception as e:
+        st.error(f"Error in chatbot: {str(e)}")
+
+
+def handle_chat_input(ticker):
+    """Handle chat input separately (must be outside tabs)"""
+    try:
+        # Chat input (must be at root level, not in tabs)
         user_input = st.chat_input("Ask anything about the stock analysis...")
         
         if user_input:
+            # Initialize chatbot if not exists
+            if 'chatbot' not in st.session_state:
+                st.session_state.chatbot = RAGChatbot()
+
+            # Initialize chat history if not exists
+            if 'chat_history' not in st.session_state:
+                st.session_state.chat_history = []
+
             # Add user message to history
             st.session_state.chat_history.append({"role": "user", "content": user_input})
             
