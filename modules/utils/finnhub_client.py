@@ -57,7 +57,7 @@ class FinnhubClient:
         # Cache for API responses
         self.cache = {}
         self.cache_timestamps = {}
-        self.cache_ttl = timedelta(minutes=15)  # Cache responses for 15 minutes
+        self.cache_ttl = timedelta(hours=1)  # Cache responses for 1 hour (symbol lookups don't change often)
 
     def _check_client(self):
         """Check if client is initialized"""
@@ -341,6 +341,27 @@ class FinnhubClient:
             return cached
 
         result = self._api_call('stock_insider_transactions', symbol, _from=_from, to=to)
+        self._set_cache(cache_key, result)
+        return result
+
+    # Symbol Search Methods
+
+    def symbol_lookup(self, query):
+        """
+        Search for stock symbols matching the query
+
+        Args:
+            query: Search query string (company name or ticker symbol)
+
+        Returns:
+            dict: Search results with matching symbols
+        """
+        cache_key = self._get_cache_key('symbol_lookup', query)
+        cached = self._get_cached(cache_key)
+        if cached:
+            return cached
+
+        result = self._api_call('symbol_lookup', query)
         self._set_cache(cache_key, result)
         return result
 

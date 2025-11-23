@@ -4,6 +4,13 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
+import sys
+from pathlib import Path
+from streamlit_searchbox import st_searchbox
+
+# Add modules to path
+sys.path.append(str(Path(__file__).parent))
+from modules.utils.finnhub_client import get_finnhub_client
 
 # Page configuration
 st.set_page_config(
@@ -42,6 +49,55 @@ def generate_demo_fundamentals(ticker):
         'Market Cap': f"${np.random.randint(100, 3000)}B"
     }
 
+def search_ticker_symbols_realtime(searchterm: str) -> list:
+    """
+    Real-time search for ticker symbols using Finnhub API
+    Returns ALL matching tickers from the market as you type
+    Used with st_searchbox for instant autocomplete
+
+    Args:
+        searchterm: Search query (company name or ticker)
+
+    Returns:
+        list: List of display strings in format "Company Name (SYMBOL)"
+    """
+    if not searchterm or len(searchterm) < 2:
+        # Return empty for short queries
+        return []
+
+    try:
+        client = get_finnhub_client()
+        result = client.symbol_lookup(searchterm)
+
+        if result and 'result' in result and result.get('count', 0) > 0:
+            suggestions = []
+
+            for item in result['result']:
+                symbol = item.get('symbol', '')
+                description = item.get('description', '')
+                ticker_type = item.get('type', '')
+                display_symbol = item.get('displaySymbol', symbol)
+
+                # Filter for common stocks only
+                if ticker_type == 'Common Stock':
+                    # Prefer US stocks (no dots in symbol) but show international if needed
+                    is_us_stock = '.' not in symbol
+
+                    display_text = f"{description} ({display_symbol})"
+                    suggestions.append((display_text, is_us_stock))
+
+            # Sort to prioritize US stocks first
+            suggestions.sort(key=lambda x: (not x[1], x[0]))  # US stocks first, then alphabetically
+
+            # Return just the display text
+            return [text for text, _ in suggestions[:20]]  # Show top 20
+
+        return []
+
+    except Exception as e:
+        # Return empty on error
+        return []
+
 def main():
     # Header
     st.markdown('<div style="font-size: 2.5rem; font-weight: bold; color: #1f77b4; text-align: center; margin-bottom: 2rem;">📈 AI-Powered Stock Analysis Platform (Demo Mode)</div>', unsafe_allow_html=True)
@@ -52,12 +108,38 @@ def main():
     # Sidebar
     with st.sidebar:
         st.title("🔧 Configuration")
-        ticker = st.text_input("Enter Stock Ticker", value="AAPL", help="Demo mode - any ticker will work")
-        
+
+        # Stock ticker search with real-time autocomplete
+        st.markdown("### 🔍 Search Stock")
+
+        selected = st_searchbox(
+            search_ticker_symbols_realtime,
+            placeholder="Type to search stocks (e.g., AAPL, Tesla, Microsoft...)",
+            label="Search by company name or ticker symbol",
+            default="Apple Inc (AAPL)",
+            clear_on_submit=False,
+            key="ticker_searchbox"
+        )
+
+        # Extract ticker symbol from selected option
+        if selected:
+            # Format is "Company Name (SYMBOL)" so extract SYMBOL
+            if '(' in selected and ')' in selected:
+                ticker = selected.split('(')[-1].split(')')[0].strip()
+                st.markdown(f"**✓ Selected:** `{ticker}`")
+            else:
+                ticker = selected
+                st.markdown(f"**✓ Selected:** `{ticker}`")
+        else:
+            ticker = "AAPL"
+            st.info("👆 Start typing to search for stocks")
+
+        st.divider()
+
         st.subheader("Data Settings")
         data_days = st.selectbox("Data Retention (Days)", [1, 2], index=1)
         analysis_period = st.selectbox("Analysis Period", ["1d", "5d", "1mo", "3mo"], index=2)
-        
+
         if st.button("🔄 Generate New Demo Data", type="primary"):
             st.rerun()
     
