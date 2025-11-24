@@ -136,11 +136,50 @@ def main():
 
         st.divider()
 
-        st.subheader("Data Settings")
-        data_days = st.selectbox("Data Retention (Days)", [1, 2], index=1)
-        analysis_period = st.selectbox("Analysis Period", ["1d", "5d", "1mo", "3mo"], index=2)
+        st.subheader("📊 Chart Settings")
 
-        if st.button("🔄 Generate New Demo Data", type="primary"):
+        # Main time range selector with clear explanation
+        analysis_period = st.selectbox(
+            "Time Range",
+            options=["1d", "5d", "1mo", "3mo", "6mo", "1y"],
+            index=2,  # Default to 1 month
+            help="📈 Select how much historical data to display on charts.\n\n"
+                 "• 1d = Last 1 day (intraday)\n"
+                 "• 5d = Last 5 days\n"
+                 "• 1mo = Last month\n"
+                 "• 3mo = Last 3 months\n"
+                 "• 6mo = Last 6 months\n"
+                 "• 1y = Last year",
+            key="time_range"
+        )
+
+        # Advanced settings in expander
+        with st.expander("⚙️ Advanced Settings", expanded=False):
+            st.caption("Technical settings for data management")
+
+            data_days = st.selectbox(
+                "Data Retention",
+                options=[1, 2, 7, 30],
+                index=1,  # Default to 2 days
+                help="🗄️ How long to keep cached data on disk.\n\n"
+                     "Lower values save storage space but require more API calls.\n"
+                     "Higher values cache more data for faster access.\n\n"
+                     "⚠️ Note: Must be ≥ selected time range to avoid missing data.",
+                key="data_retention"
+            )
+
+            # Validation warning
+            period_days_map = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+            required_days = period_days_map.get(analysis_period, 30)
+
+            if data_days < required_days:
+                st.warning(
+                    f"⚠️ Data retention ({data_days} days) is less than time range "
+                    f"({analysis_period} = ~{required_days} days). Some data may be missing.",
+                    icon="⚠️"
+                )
+
+        if st.button("🔄 Generate New Demo Data", type="primary", use_container_width=True):
             st.rerun()
     
     # Main tabs
@@ -149,7 +188,7 @@ def main():
     if ticker:
         # Generate demo data
         with st.spinner("Generating demo data..."):
-            period_map = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90}
+            period_map = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             demo_data = generate_demo_data(ticker, period_map.get(analysis_period, 30))
             demo_fundamentals = generate_demo_fundamentals(ticker)
         
@@ -161,18 +200,34 @@ def main():
             with col1:
                 st.subheader("Price Chart")
                 fig = go.Figure()
+
+                # Create custom hover text with all OHLCV data
+                hover_text = []
+                for i in range(len(demo_data)):
+                    hover_text.append(
+                        f"<b>Date:</b> {demo_data.index[i].strftime('%Y-%m-%d')}<br>"
+                        f"<b>Open:</b> ${demo_data['Open'].iloc[i]:.2f}<br>"
+                        f"<b>High:</b> ${demo_data['High'].iloc[i]:.2f}<br>"
+                        f"<b>Low:</b> ${demo_data['Low'].iloc[i]:.2f}<br>"
+                        f"<b>Close:</b> ${demo_data['Close'].iloc[i]:.2f}<br>"
+                        f"<b>Volume:</b> {demo_data['Volume'].iloc[i]:,.0f}"
+                    )
+
                 fig.add_trace(go.Scatter(
                     x=demo_data.index,
                     y=demo_data['Close'],
                     mode='lines',
                     name='Close Price',
-                    line=dict(color='blue', width=2)
+                    line=dict(color='blue', width=2),
+                    hovertext=hover_text,
+                    hoverinfo='text'
                 ))
                 fig.update_layout(
                     title=f'{ticker} Stock Price',
                     xaxis_title='Date',
                     yaxis_title='Price ($)',
-                    height=400
+                    height=400,
+                    hovermode='x unified'
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -193,10 +248,60 @@ def main():
             with col1:
                 st.subheader("Moving Averages")
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=demo_data.index, y=demo_data['Close'], name='Close', line=dict(color='blue')))
-                fig.add_trace(go.Scatter(x=demo_data.index, y=demo_data['SMA_20'], name='SMA 20', line=dict(color='orange')))
-                fig.add_trace(go.Scatter(x=demo_data.index, y=demo_data['SMA_50'], name='SMA 50', line=dict(color='red')))
-                fig.update_layout(title=f'{ticker} - Moving Averages', height=400)
+
+                # Add Close price with detailed hover
+                close_hover = []
+                for i in range(len(demo_data)):
+                    close_hover.append(
+                        f"<b>Date:</b> {demo_data.index[i].strftime('%Y-%m-%d')}<br>"
+                        f"<b>Close:</b> ${demo_data['Close'].iloc[i]:.2f}<br>"
+                        f"<b>Volume:</b> {demo_data['Volume'].iloc[i]:,.0f}"
+                    )
+
+                fig.add_trace(go.Scatter(
+                    x=demo_data.index,
+                    y=demo_data['Close'],
+                    name='Close',
+                    line=dict(color='blue'),
+                    hovertext=close_hover,
+                    hoverinfo='text'
+                ))
+
+                # Add SMA 20
+                sma20_hover = [f"<b>Date:</b> {demo_data.index[i].strftime('%Y-%m-%d')}<br>"
+                              f"<b>SMA 20:</b> ${demo_data['SMA_20'].iloc[i]:.2f}"
+                              if not pd.isna(demo_data['SMA_20'].iloc[i]) else "No data"
+                              for i in range(len(demo_data))]
+
+                fig.add_trace(go.Scatter(
+                    x=demo_data.index,
+                    y=demo_data['SMA_20'],
+                    name='SMA 20',
+                    line=dict(color='orange'),
+                    hovertext=sma20_hover,
+                    hoverinfo='text'
+                ))
+
+                # Add SMA 50
+                sma50_hover = [f"<b>Date:</b> {demo_data.index[i].strftime('%Y-%m-%d')}<br>"
+                              f"<b>SMA 50:</b> ${demo_data['SMA_50'].iloc[i]:.2f}"
+                              if not pd.isna(demo_data['SMA_50'].iloc[i]) else "No data"
+                              for i in range(len(demo_data))]
+
+                fig.add_trace(go.Scatter(
+                    x=demo_data.index,
+                    y=demo_data['SMA_50'],
+                    name='SMA 50',
+                    line=dict(color='red'),
+                    hovertext=sma50_hover,
+                    hoverinfo='text'
+                ))
+
+                fig.update_layout(
+                    title=f'{ticker} - Moving Averages',
+                    height=400,
+                    hovermode='x unified'
+                )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
