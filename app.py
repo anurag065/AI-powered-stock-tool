@@ -2,6 +2,8 @@ import streamlit as st
 import sys
 import os
 from pathlib import Path
+import pandas as pd
+from streamlit_searchbox import st_searchbox
 
 # Disable tokenizers parallelism to avoid forking warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -14,6 +16,7 @@ from modules.data_module.data_fetcher import DataFetcher
 from modules.indicator_dashboard.technical_analysis import TechnicalAnalysis
 from modules.sentiment_module.sentiment_analyzer import SentimentAnalyzer
 from modules.chatbot_module.rag_chatbot import RAGChatbot
+from modules.utils.finnhub_client import get_finnhub_client
 from utils.database import DatabaseManager
 
 # Page configuration
@@ -43,6 +46,40 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def search_ticker_symbols_realtime(searchterm: str) -> list:
+    """
+    Real-time search for ticker symbols using Finnhub API
+    Returns ALL matching tickers from the market as you type
+    """
+    if not searchterm or len(searchterm) < 2:
+        return []
+
+    try:
+        client = get_finnhub_client()
+        result = client.symbol_lookup(searchterm)
+
+        if result and 'result' in result and result.get('count', 0) > 0:
+            suggestions = []
+
+            for item in result['result']:
+                symbol = item.get('symbol', '')
+                description = item.get('description', '')
+                ticker_type = item.get('type', '')
+                display_symbol = item.get('displaySymbol', symbol)
+
+                if ticker_type == 'Common Stock':
+                    is_us_stock = '.' not in symbol
+                    display_text = f"{description} ({display_symbol})"
+                    suggestions.append((display_text, is_us_stock))
+
+            suggestions.sort(key=lambda x: (not x[1], x[0]))
+            return [text for text, _ in suggestions[:20]]
+
+        return []
+
+    except Exception as e:
+        return []
+
 def main():
     # Header
     st.markdown('<div class="main-header">📈 AI-Powered Stock Analysis Platform</div>', unsafe_allow_html=True)
@@ -50,19 +87,77 @@ def main():
     # Sidebar for ticker input
     with st.sidebar:
         st.title("🔧 Configuration")
-        ticker = st.text_input("Enter Stock Ticker", value="AAPL", help="Enter a valid stock ticker symbol")
-        
-        # Data retention settings
-        st.subheader("Data Settings")
-        data_days = st.selectbox("Data Retention (Days)", [1, 2], index=1, 
-                                help="Number of days of stock data to store")
-        
-        # Analysis period
-        analysis_period = st.selectbox("Analysis Period", 
-                                     ["1d", "5d", "1mo", "3mo", "6mo", "1y"], 
-                                     index=2)
-        
-        if st.button("🔄 Refresh Data", type="primary"):
+
+        # Stock ticker search with real-time autocomplete
+        st.markdown("### 🔍 Search Stock")
+
+        selected = st_searchbox(
+            search_ticker_symbols_realtime,
+            placeholder="Type to search stocks (e.g., AAPL, Tesla, Microsoft...)",
+            label="Search by company name or ticker symbol",
+            default="Apple Inc (AAPL)",
+            clear_on_submit=False,
+            key="ticker_searchbox"
+        )
+
+        # Extract ticker symbol from selected option
+        if selected:
+            if '(' in selected and ')' in selected:
+                ticker = selected.split('(')[-1].split(')')[0].strip()
+                st.markdown(f"**✓ Selected:** `{ticker}`")
+            else:
+                ticker = selected
+                st.markdown(f"**✓ Selected:** `{ticker}`")
+        else:
+            ticker = "AAPL"
+            st.info("👆 Start typing to search for stocks")
+
+        st.divider()
+
+        # Chart settings
+        st.subheader("📊 Chart Settings")
+
+        analysis_period = st.selectbox(
+            "Time Range",
+            options=["1d", "5d", "1mo", "3mo", "6mo", "1y"],
+            index=2,
+            help="📈 Select how much historical data to display on charts.\n\n"
+                 "• 1d = Last 1 day (intraday)\n"
+                 "• 5d = Last 5 days\n"
+                 "• 1mo = Last month\n"
+                 "• 3mo = Last 3 months\n"
+                 "• 6mo = Last 6 months\n"
+                 "• 1y = Last year",
+            key="time_range"
+        )
+
+        # Advanced settings in expander
+        with st.expander("⚙️ Advanced Settings", expanded=False):
+            st.caption("Technical settings for data management")
+
+            data_days = st.selectbox(
+                "Data Retention",
+                options=[1, 2, 7, 30],
+                index=1,
+                help="🗄️ How long to keep cached data on disk.\n\n"
+                     "Lower values save storage space but require more API calls.\n"
+                     "Higher values cache more data for faster access.\n\n"
+                     "⚠️ Note: Must be ≥ selected time range to avoid missing data.",
+                key="data_retention"
+            )
+
+            # Validation warning
+            period_days_map = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+            required_days = period_days_map.get(analysis_period, 30)
+
+            if data_days < required_days:
+                st.warning(
+                    f"⚠️ Data retention ({data_days} days) is less than time range "
+                    f"({analysis_period} = ~{required_days} days). Some data may be missing.",
+                    icon="⚠️"
+                )
+
+        if st.button("🔄 Refresh Data", type="primary", use_container_width=True):
             st.cache_data.clear()
             st.success("Cache cleared! Data will refresh on next load.")
     
@@ -70,13 +165,17 @@ def main():
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Data Overview", "📈 Technical Analysis", "📰 Sentiment Analysis", "🤖 AI Chatbot"])
     
     if ticker:
+        # Initialize session state for quick period selector
+        if 'quick_period' not in st.session_state:
+            st.session_state.quick_period = analysis_period
+
         try:
             # Initialize components
             data_fetcher = DataFetcher()
-            
+
             with tab1:
                 st.header("📊 Real-Time Data & Fundamentals")
-                display_data_overview(ticker, analysis_period, data_days)
+                display_data_overview(ticker, st.session_state.quick_period, data_days)
               
             
             with tab2:
@@ -136,30 +235,57 @@ def display_data_overview(selected_ticker, selected_period, data_retention_days)
         selected_period: Analysis period (1d, 5d, 1mo, etc.)
         data_retention_days: Cache retention setting
     """
+    # Quick time range selector buttons
+    st.markdown("##### ⚡ Quick Time Range")
+    col_buttons = st.columns([1, 1, 1, 1, 1, 1, 2])
+
+    periods = ["1d", "5d", "1mo", "3mo", "6mo", "1y"]
+    period_labels = ["1D", "5D", "1M", "3M", "6M", "1Y"]
+
+    for i, (period, label) in enumerate(zip(periods, period_labels)):
+        with col_buttons[i]:
+            button_type = "primary" if st.session_state.quick_period == period else "secondary"
+            if st.button(label, key=f"period_btn_tab1_{period}", type=button_type, use_container_width=True):
+                st.session_state.quick_period = period
+                st.rerun()
+
+    st.markdown("---")
+
     try:
         from modules.data_module.data_fetcher import DataFetcher
-        
+
         # Use the data_retention_days parameter
         data_fetcher = DataFetcher(cache_days=data_retention_days)
-        
+
         # Fetch stock data
         with st.spinner(f"Fetching data for {selected_ticker}..."):
             stock_data = data_fetcher.get_stock_data(selected_ticker, selected_period)
             fundamentals = data_fetcher.get_fundamentals(selected_ticker)
             realtime_price = data_fetcher.get_realtime_price(selected_ticker)
-        
+
         if not stock_data.empty:
             col1, col2 = st.columns([2, 1])
             
             with col1:
                 st.subheader("Price Chart")
                 
-                # Create FIXED price chart
+                # Create FIXED price chart with OHLCV hover tooltips
                 import plotly.graph_objects as go
-                
+
                 fig = go.Figure()
-                
-                # Add candlestick or line chart
+
+                # Create custom hover text with all OHLCV data
+                hover_text = []
+                for i in range(len(stock_data)):
+                    hover_text.append(
+                        f"<b>Date:</b> {stock_data.index[i].strftime('%Y-%m-%d')}<br>"
+                        f"<b>Open:</b> ${stock_data['Open'].iloc[i]:.2f}<br>"
+                        f"<b>High:</b> ${stock_data['High'].iloc[i]:.2f}<br>"
+                        f"<b>Low:</b> ${stock_data['Low'].iloc[i]:.2f}<br>"
+                        f"<b>Close:</b> ${stock_data['Close'].iloc[i]:.2f}<br>"
+                        f"<b>Volume:</b> {stock_data['Volume'].iloc[i]:,.0f}"
+                    )
+
                 # Add line chart for all periods
                 if len(stock_data) > 1:
                     fig.add_trace(go.Scatter(
@@ -168,11 +294,9 @@ def display_data_overview(selected_ticker, selected_period, data_retention_days)
                         mode='lines',
                         name=f'{selected_ticker} Price',
                         line=dict(color='#00d4aa', width=2),
-                        hovertemplate='<b>%{fullData.name}</b><br>' +
-                                    'Date: %{x}<br>' +
-                                    'Price: $%{y:.2f}<br>' +
-                                    '<extra></extra>'
-                ))
+                        hovertext=hover_text,
+                        hoverinfo='text'
+                    ))
                     
                 
                 # Update layout with proper scaling
@@ -183,6 +307,7 @@ def display_data_overview(selected_ticker, selected_period, data_retention_days)
                     template='plotly_dark',
                     height=400,
                     showlegend=False,
+                    hovermode='x unified',
                     xaxis=dict(
                         showgrid=True,
                         gridcolor='rgba(128, 128, 128, 0.2)'

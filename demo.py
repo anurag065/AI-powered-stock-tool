@@ -186,14 +186,35 @@ def main():
     tab1, tab2, tab3 = st.tabs(["📊 Data Overview", "📈 Technical Analysis", "📰 Sentiment Analysis"])
     
     if ticker:
+        # Initialize session state for quick period selector
+        if 'quick_period' not in st.session_state:
+            st.session_state.quick_period = analysis_period
+
         # Generate demo data
         with st.spinner("Generating demo data..."):
-            period_map = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
-            demo_data = generate_demo_data(ticker, period_map.get(analysis_period, 30))
+            period_map = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "max": 365}
+            demo_data = generate_demo_data(ticker, period_map.get(st.session_state.quick_period, 30))
             demo_fundamentals = generate_demo_fundamentals(ticker)
-        
+
         with tab1:
             st.header("📊 Real-Time Data & Fundamentals (Demo)")
+
+            # Quick time range selector buttons
+            st.markdown("##### ⚡ Quick Time Range")
+            col_buttons = st.columns([1, 1, 1, 1, 1, 1, 1, 2])
+
+            periods = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "max"]
+            period_labels = ["1D", "5D", "1M", "3M", "6M", "1Y", "Max"]
+
+            for i, (period, label) in enumerate(zip(periods, period_labels)):
+                with col_buttons[i]:
+                    # Highlight active button
+                    button_type = "primary" if st.session_state.quick_period == period else "secondary"
+                    if st.button(label, key=f"period_btn_{period}", type=button_type, use_container_width=True):
+                        st.session_state.quick_period = period
+                        st.rerun()
+
+            st.markdown("---")
             
             col1, col2 = st.columns([2, 1])
             
@@ -238,11 +259,24 @@ def main():
         
         with tab2:
             st.header("📈 Technical Analysis (Demo)")
-            
+
+            # Quick time range selector buttons
+            st.markdown("##### ⚡ Quick Time Range")
+            col_buttons2 = st.columns([1, 1, 1, 1, 1, 1, 1, 2])
+
+            for i, (period, label) in enumerate(zip(periods, period_labels)):
+                with col_buttons2[i]:
+                    button_type = "primary" if st.session_state.quick_period == period else "secondary"
+                    if st.button(label, key=f"period_btn_tab2_{period}", type=button_type, use_container_width=True):
+                        st.session_state.quick_period = period
+                        st.rerun()
+
+            st.markdown("---")
+
             # Calculate simple moving averages
             demo_data['SMA_20'] = demo_data['Close'].rolling(20).mean()
             demo_data['SMA_50'] = demo_data['Close'].rolling(50).mean()
-            
+
             col1, col2 = st.columns(2)
             
             with col1:
