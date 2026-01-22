@@ -86,28 +86,42 @@ class TwelveDataClient:
         self.cache[cache_key] = value
         self.cache_timestamps[cache_key] = datetime.now()
 
-    def _period_to_outputsize(self, period):
+    def _period_to_outputsize(self, period, interval='1day'):
         """
         Convert period string to outputsize for Twelve Data
 
         Args:
             period: Period string like '1mo', '3mo', '6mo', '1y'
+            interval: Data interval (1h, 30min, 1day, etc.)
 
         Returns:
             int: Number of data points to request
         """
         try:
+            # Calculate base days
             if period.endswith('y'):
-                years = int(period[:-1])
-                return min(years * 252, 5000)  # 252 trading days per year, max 5000
+                days = int(period[:-1]) * 252  # trading days per year
             elif period.endswith('mo'):
-                months = int(period[:-2])
-                return min(months * 21, 5000)  # ~21 trading days per month
+                days = int(period[:-2]) * 21  # ~21 trading days per month
             elif period.endswith('d'):
                 days = int(period[:-1])
-                return min(days, 5000)
             else:
-                return 30  # Default to 1 month
+                days = 21  # Default to 1 month
+
+            # Adjust outputsize based on interval
+            # Market hours ~6.5 hours = ~7 hourly bars per day
+            if interval == '1h':
+                return min(days * 7, 5000)
+            elif interval == '30min':
+                return min(days * 13, 5000)  # ~13 30-min bars per day
+            elif interval == '15min':
+                return min(days * 26, 5000)
+            elif interval == '5min':
+                return min(days * 78, 5000)
+            elif interval == '1min':
+                return min(days * 390, 5000)
+            else:
+                return min(days, 5000)  # Daily or longer
         except:
             return 30
 
@@ -129,7 +143,7 @@ class TwelveDataClient:
 
         # Convert period to outputsize if provided
         if period:
-            outputsize = self._period_to_outputsize(period)
+            outputsize = self._period_to_outputsize(period, interval)
 
         # Check cache first
         cache_key = self._get_cache_key('time_series', symbol, interval, outputsize)
