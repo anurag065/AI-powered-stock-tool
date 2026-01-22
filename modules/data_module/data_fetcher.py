@@ -756,54 +756,82 @@ class DataFetcher:
             # Clean old data first
             self._clean_old_data()
 
-            # Check cache first
-            conn = sqlite3.connect(self.db_path)
+            # Determine appropriate interval based on period FIRST
+            # 1d = hourly data, 5d = 30min data, others = daily data
+            is_intraday = period in ['1d', '5d']
+            if period == '1d':
+                interval = '1h'
+                yf_interval = '1h'
+            elif period == '5d':
+                interval = '30min'
+                yf_interval = '30m'
+            else:
+                interval = '1day'
+                yf_interval = '1d'
 
-            # Get cached data
-            cached_data = pd.read_sql_query('''
-                SELECT date, open, high, low, close, volume
-                FROM stock_prices
-                WHERE ticker = ?
-                ORDER BY date
-            ''', conn, params=(ticker,))
+            # Calculate required days for the requested period
+            required_days = self._period_to_days(period)
 
-            conn.close()
+            # Skip SQLite cache for intraday data (cache only stores daily data)
+            if not is_intraday:
+                # Check cache first - but only use it if it has enough data for the period
+                conn = sqlite3.connect(self.db_path)
 
-            # If we have recent data, return it
-            if not cached_data.empty:
-                cached_data['date'] = pd.to_datetime(cached_data['date'])
-                cached_data.set_index('date', inplace=True)
-                cached_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+                # Get cached data
+                cached_data = pd.read_sql_query('''
+                    SELECT date, open, high, low, close, volume
+                    FROM stock_prices
+                    WHERE ticker = ?
+                    ORDER BY date
+                ''', conn, params=(ticker,))
 
-                # Rename columns to match standard format (capitalize first letter)
-                cached_data = cached_data.rename(columns={
-                    'open': 'Open',
-                    'high': 'High',
-                    'low': 'Low',
-                    'close': 'Close',
-                    'volume': 'Volume'
-                })
+                conn.close()
 
-                # Check if data is recent enough
-                latest_date = cached_data.index.max()
-                if latest_date.date() >= (datetime.now() - timedelta(days=1)).date():
-                    logger.info(f"Returning cached data for {ticker}")
-                    return cached_data
+                # If we have recent data AND it covers the requested period, return it
+                if not cached_data.empty:
+                    cached_data['date'] = pd.to_datetime(cached_data['date'])
+                    cached_data.set_index('date', inplace=True)
+                    cached_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+
+                    # Rename columns to match standard format (capitalize first letter)
+                    cached_data = cached_data.rename(columns={
+                        'open': 'Open',
+                        'high': 'High',
+                        'low': 'Low',
+                        'close': 'Close',
+                        'volume': 'Volume'
+                    })
+
+                    # Check if data is recent enough AND covers the requested period
+                    latest_date = cached_data.index.max()
+                    earliest_date = cached_data.index.min()
+                    cached_days = (latest_date - earliest_date).days
+
+                    # Only use cache if it's recent AND has enough historical data
+                    if (latest_date.date() >= (datetime.now() - timedelta(days=1)).date() and
+                        cached_days >= required_days * 0.8):  # Allow 80% coverage
+                        logger.info(f"Returning cached data for {ticker} (period: {period})")
+                        return cached_data
+                    else:
+                        logger.info(f"Cache insufficient for {ticker} - need {required_days} days, have {cached_days} days")
+            else:
+                logger.info(f"Skipping cache for intraday period {period}")
 
             # Try Twelve Data first for historical price charts
             if self.use_twelvedata:
                 try:
-                    logger.info(f"Fetching Twelve Data historical data for {ticker} (period: {period})")
-                    data = self.twelvedata.get_time_series(ticker, interval='1day', period=period)
+                    logger.info(f"Fetching Twelve Data historical data for {ticker} (period: {period}, interval: {interval})")
+                    data = self.twelvedata.get_time_series(ticker, interval=interval, period=period)
 
                     if not data.empty:
                         # Apply standardization fix
                         data = self._standardize_dataframe(data, ticker)
                         if not data.empty:
                             logger.info(f"Retrieved {len(data)} data points from Twelve Data for {ticker}")
-                            # Store in cache (only last few days based on cache_days)
-                            recent_data = data.tail(self.cache_days * 5)  # Approximate for trading days
-                            self._cache_stock_data(ticker, recent_data)
+                            # Only cache daily data (not intraday)
+                            if interval == '1day':
+                                recent_data = data.tail(self.cache_days * 5)
+                                self._cache_stock_data(ticker, recent_data)
                             return data
                     else:
                         logger.warning(f"Twelve Data returned empty data for {ticker}, falling back to yfinance")
@@ -811,9 +839,9 @@ class DataFetcher:
                     logger.warning(f"Twelve Data failed for {ticker}: {e}, falling back to yfinance")
 
             # Fallback to yfinance for historical price data
-            logger.info(f"Fetching yfinance historical data for {ticker} (period: {period})")
+            logger.info(f"Fetching yfinance historical data for {ticker} (period: {period}, interval: {yf_interval})")
             stock = self.ticker_cache.get_ticker(ticker)
-            data = stock.history(period=period)
+            data = stock.history(period=period, interval=yf_interval)
 
             # Apply standardization fix to prevent KeyError
             data = self._standardize_dataframe(data, ticker)
@@ -822,9 +850,10 @@ class DataFetcher:
                 logger.warning(f"No data found for ticker {ticker}")
                 return pd.DataFrame()
 
-            # Store in cache (only last few days based on cache_days)
-            recent_data = data.tail(self.cache_days * 5)  # Approximate for trading days
-            self._cache_stock_data(ticker, recent_data)
+            # Only cache daily data (not intraday) to avoid mixing data types
+            if not is_intraday:
+                recent_data = data.tail(self.cache_days * 5)  # Approximate for trading days
+                self._cache_stock_data(ticker, recent_data)
 
             return data
 
