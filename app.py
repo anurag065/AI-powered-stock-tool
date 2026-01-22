@@ -268,17 +268,28 @@ def display_data_overview(selected_ticker, selected_period, data_retention_days)
             
             with col1:
                 st.subheader("Price Chart")
-                
+
                 # Create FIXED price chart with OHLCV hover tooltips
                 import plotly.graph_objects as go
 
                 fig = go.Figure()
 
+                # Determine if this is intraday data (1d or 5d periods)
+                is_intraday = selected_period in ['1d', '5d']
+
                 # Create custom hover text with all OHLCV data
                 hover_text = []
                 for i in range(len(stock_data)):
+                    # Use different date format for intraday vs daily data
+                    if is_intraday:
+                        date_str = stock_data.index[i].strftime('%Y-%m-%d %H:%M')
+                        date_label = "Time"
+                    else:
+                        date_str = stock_data.index[i].strftime('%Y-%m-%d')
+                        date_label = "Date"
+
                     hover_text.append(
-                        f"<b>Date:</b> {stock_data.index[i].strftime('%Y-%m-%d')}<br>"
+                        f"<b>{date_label}:</b> {date_str}<br>"
                         f"<b>Open:</b> ${stock_data['Open'].iloc[i]:.2f}<br>"
                         f"<b>High:</b> ${stock_data['High'].iloc[i]:.2f}<br>"
                         f"<b>Low:</b> ${stock_data['Low'].iloc[i]:.2f}<br>"
@@ -307,16 +318,27 @@ def display_data_overview(selected_ticker, selected_period, data_retention_days)
                     template='plotly_dark',
                     height=400,
                     showlegend=False,
-                    hovermode='x unified',
+                    hovermode='x',  # Show tooltip for nearest x-value
+                    hoverdistance=-1,  # Show tooltip at any vertical distance
                     xaxis=dict(
                         showgrid=True,
-                        gridcolor='rgba(128, 128, 128, 0.2)'
+                        gridcolor='rgba(128, 128, 128, 0.2)',
+                        showspikes=True,  # Show vertical spike line on hover
+                        spikecolor='#00d4aa',
+                        spikethickness=1,
+                        spikedash='dot',
+                        spikemode='across'
                     ),
                     yaxis=dict(
                         showgrid=True,
                         gridcolor='rgba(128, 128, 128, 0.2)',
                         autorange=True,
-                        fixedrange=False
+                        fixedrange=False,
+                        showspikes=True,  # Show horizontal spike line on hover
+                        spikecolor='#00d4aa',
+                        spikethickness=1,
+                        spikedash='dot',
+                        spikemode='across'
                     )
                 )
                 

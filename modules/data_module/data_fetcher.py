@@ -757,14 +757,14 @@ class DataFetcher:
             self._clean_old_data()
 
             # Determine appropriate interval based on period FIRST
-            # 1d = hourly data, 5d = 30min data, others = daily data
+            # 1d = 5min data for fine granularity, 5d = 15min data, others = daily data
             is_intraday = period in ['1d', '5d']
             if period == '1d':
-                interval = '1h'
-                yf_interval = '1h'
+                interval = '5min'
+                yf_interval = '5m'
             elif period == '5d':
-                interval = '30min'
-                yf_interval = '30m'
+                interval = '15min'
+                yf_interval = '15m'
             else:
                 interval = '1day'
                 yf_interval = '1d'
