@@ -15,7 +15,7 @@ sys.path.append(str(project_root))
 from modules.data_module.data_fetcher import DataFetcher
 from modules.indicator_dashboard.technical_analysis import TechnicalAnalysis
 from modules.sentiment_module.sentiment_analyzer import SentimentAnalyzer
-from modules.chatbot_module.rag_chatbot import RAGChatbot
+from modules.chatbot_module.rag_chatbot import EnhancedOpenAIChatbot
 from modules.utils.finnhub_client import get_finnhub_client
 from utils.database import DatabaseManager
 
@@ -781,7 +781,7 @@ def display_chatbot(ticker):
     try:
         # Initialize chatbot
         if 'chatbot' not in st.session_state:
-            st.session_state.chatbot = RAGChatbot()
+            st.session_state.chatbot = EnhancedOpenAIChatbot()
         
         # Chat history
         if 'chat_history' not in st.session_state:
@@ -807,7 +807,7 @@ def handle_chat_input(ticker):
         if user_input:
             # Initialize chatbot if not exists
             if 'chatbot' not in st.session_state:
-                st.session_state.chatbot = RAGChatbot()
+                st.session_state.chatbot = EnhancedOpenAIChatbot()
 
             # Initialize chat history if not exists
             if 'chat_history' not in st.session_state:

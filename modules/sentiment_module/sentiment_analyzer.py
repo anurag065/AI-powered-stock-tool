@@ -9,7 +9,6 @@ import sqlite3
 from pathlib import Path
 import sys
 
-# Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 try:
     from utils.finnhub_client import get_finnhub_client
@@ -22,8 +21,12 @@ logger = logging.getLogger(__name__)
 
 class SentimentAnalyzer:
     """
-    Sentiment Analysis module for analyzing financial news sentiment
-    Uses FinBERT for financial sentiment analysis and Finnhub for news data
+    Enhanced Sentiment Analysis module for analyzing financial news sentiment
+    Features:
+    - Time-weighted sentiment scoring (recent news gets more weight)
+    - Descriptive sentiment labels (Very Positive, Slightly Positive, etc.)
+    - "Read full news" links that open in new tabs
+    - Uses FinBERT for financial sentiment analysis and Finnhub for news data
     """
 
     def __init__(self):
@@ -31,7 +34,6 @@ class SentimentAnalyzer:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.cache_dir / "sentiment_data.db"
 
-        # Initialize Finnhub client for news
         try:
             self.finnhub = get_finnhub_client()
             self.use_finnhub = True
@@ -41,7 +43,6 @@ class SentimentAnalyzer:
             self.finnhub = None
             self.use_finnhub = False
 
-        # Initialize DataFetcher for company info
         self.data_fetcher = DataFetcher()
 
         self._init_database()
@@ -63,6 +64,8 @@ class SentimentAnalyzer:
                 published TEXT,
                 sentiment_score REAL,
                 sentiment_label TEXT,
+                time_weight REAL,
+                weighted_score REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(ticker, url)
             )
@@ -72,9 +75,15 @@ class SentimentAnalyzer:
             CREATE TABLE IF NOT EXISTS ticker_sentiment_summary (
                 ticker TEXT PRIMARY KEY,
                 overall_sentiment REAL,
+                weighted_sentiment REAL,
+                sentiment_label TEXT,
                 positive_count INTEGER,
                 negative_count INTEGER,
                 neutral_count INTEGER,
+                very_positive_count INTEGER,
+                slightly_positive_count INTEGER,
+                slightly_negative_count INTEGER,
+                very_negative_count INTEGER,
                 total_articles INTEGER,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -86,7 +95,6 @@ class SentimentAnalyzer:
     def _init_sentiment_model(self):
         """Initialize FinBERT model for financial sentiment analysis"""
         try:
-            # Use a lightweight financial sentiment model
             model_name = "ProsusAI/finbert"
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
@@ -99,7 +107,6 @@ class SentimentAnalyzer:
             logger.info("FinBERT model loaded successfully")
         except Exception as e:
             logger.warning(f"Failed to load FinBERT model: {str(e)}")
-            # Fallback to a simpler model
             try:
                 self.sentiment_pipeline = pipeline(
                     "sentiment-analysis",
@@ -111,12 +118,56 @@ class SentimentAnalyzer:
                 logger.error(f"Failed to load any sentiment model: {str(e2)}")
                 self.sentiment_pipeline = None
     
+    def calculate_time_weight(self, published_date):
+        """
+        Calculate time-based weight for news articles
+        Recent news gets higher weight:
+        - Today: 100% (1.0)
+        - Yesterday: 80% (0.8) 
+        - Last week: 30% (0.3)
+        - Last month: 10% (0.1)
+        - Older than month: 5% (0.05)
+        """
+        if not published_date:
+            return 0.1  
+        
+        now = datetime.now()
+        time_diff = now - published_date
+        days_old = time_diff.days
+        hours_old = time_diff.total_seconds() / 3600
+        
+        if hours_old <= 24:  
+            return 1.0
+        elif days_old <= 1:   
+            return 0.8
+        elif days_old <= 7:  
+            return 0.3
+        elif days_old <= 30:  
+            return 0.1
+        else:  
+            return 0.05
+    
+    def get_enhanced_sentiment_label(self, sentiment_score):
+        """
+        Convert sentiment score to descriptive labels
+        More granular than just positive/negative/neutral
+        """
+        if sentiment_score >= 0.4:
+            return "Very Positive"
+        elif sentiment_score >= 0.15:
+            return "Slightly Positive"
+        elif sentiment_score > -0.15:
+            return "Neutral"
+        elif sentiment_score > -0.4:
+            return "Slightly Negative"
+        else:
+            return "Very Negative"
+    
     def get_news_urls_for_ticker(self, ticker):
         """
         Generate RSS feed URLs for financial news about a specific ticker
         (Fallback method when Finnhub news is not available)
         """
-        # Get company name for better search results
         try:
             stock_info = self.data_fetcher.get_stock_info(ticker)
             company_name = stock_info.get('company_name', ticker)
@@ -126,26 +177,22 @@ class SentimentAnalyzer:
 
         urls = []
 
-        # Google News RSS feeds
-        for term in search_terms[:2]:  # Limit to avoid too many requests
+        for term in search_terms[:2]:  
             google_news_url = f"https://news.google.com/rss/search?q={term}+stock+financial&hl=en-US&gl=US&ceid=US:en"
             urls.append(('Google News', google_news_url))
 
-        # Yahoo Finance RSS (if available)
         yahoo_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
         urls.append(('Yahoo Finance', yahoo_url))
 
         return urls
     
-    def fetch_news_headlines(self, ticker, max_articles=20):
+    def fetch_news_headlines(self, ticker, max_articles=50):
         """
         Fetch recent news headlines for a ticker from Finnhub (primary) or RSS feeds (fallback)
         """
         try:
-            # Clean old data first (keep only last 2 days)
             self._clean_old_sentiment_data()
 
-            # Check if we have recent cached data
             cached_news = self._get_cached_news(ticker)
             if cached_news:
                 logger.info(f"Returning cached news for {ticker}")
@@ -153,13 +200,11 @@ class SentimentAnalyzer:
 
             all_articles = []
 
-            # Try Finnhub news first
             if self.use_finnhub:
                 try:
                     logger.info(f"Fetching Finnhub company news for {ticker}")
-                    # Get news from last 7 days
                     end_date = datetime.now()
-                    start_date = end_date - timedelta(days=7)
+                    start_date = end_date - timedelta(days=10)
 
                     news_items = self.finnhub.company_news(
                         ticker,
@@ -180,14 +225,12 @@ class SentimentAnalyzer:
                             all_articles.append(article)
 
                         logger.info(f"Retrieved {len(all_articles)} news articles from Finnhub for {ticker}")
-                        # Sort by date
                         all_articles.sort(key=lambda x: x['published'], reverse=True)
                         return all_articles
 
                 except Exception as e:
                     logger.warning(f"Finnhub news failed for {ticker}: {e}, falling back to RSS feeds")
 
-            # Fallback to RSS feeds
             logger.info(f"Fetching RSS feed news for {ticker}")
             news_urls = self.get_news_urls_for_ticker(ticker)
 
@@ -205,7 +248,6 @@ class SentimentAnalyzer:
                             'ticker': ticker
                         }
 
-                        # Only include articles from last 7 days
                         if article['published'] and (datetime.now() - article['published']).days <= 7:
                             all_articles.append(article)
 
@@ -213,7 +255,6 @@ class SentimentAnalyzer:
                     logger.warning(f"Error fetching from {source_name}: {str(e)}")
                     continue
 
-            # Sort by date and limit
             all_articles.sort(key=lambda x: x['published'] or datetime.min, reverse=True)
             return all_articles[:max_articles]
 
@@ -225,12 +266,11 @@ class SentimentAnalyzer:
         """Get cached news if it's recent (less than 4 hours old)"""
         conn = sqlite3.connect(self.db_path)
         
-        # Check for recent data
         cutoff_time = datetime.now() - timedelta(hours=4)
         
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT title, summary, url, source, published, sentiment_score, sentiment_label
+            SELECT title, summary, url, source, published, sentiment_score, sentiment_label, time_weight, weighted_score
             FROM news_sentiment 
             WHERE ticker = ? AND created_at > ?
             ORDER BY published DESC
@@ -250,6 +290,8 @@ class SentimentAnalyzer:
                     'published': datetime.fromisoformat(row[4]) if row[4] else None,
                     'sentiment': row[5],
                     'sentiment_label': row[6],
+                    'time_weight': row[7],
+                    'weighted_score': row[8],
                     'ticker': ticker
                 }
                 cached_articles.append(article)
@@ -263,7 +305,6 @@ class SentimentAnalyzer:
             return None
 
         try:
-            # Try different date formats
             formats = [
                 '%a, %d %b %Y %H:%M:%S %Z',
                 '%a, %d %b %Y %H:%M:%S %z',
@@ -280,11 +321,9 @@ class SentimentAnalyzer:
                     continue
 
             if parsed_date is None:
-                # If all formats fail, return current time
                 logger.warning(f"Could not parse date: {date_str}")
                 return datetime.now()
 
-            # Remove timezone info to make it timezone-naive
             if parsed_date.tzinfo is not None:
                 parsed_date = parsed_date.replace(tzinfo=None)
 
@@ -297,24 +336,20 @@ class SentimentAnalyzer:
     def analyze_sentiment(self, text):
         """
         Analyze sentiment of a text using FinBERT or fallback model
-        Returns sentiment score (-1 to 1) and label
+        Returns sentiment score (-1 to 1) and enhanced label
         """
         if not self.sentiment_pipeline:
-            return 0.0, 'neutral'
+            return 0.0, 'Neutral'
         
         try:
-            # Truncate text if too long
             text = text[:512]
             
             results = self.sentiment_pipeline(text)
             
-            # Process results based on model type
             if isinstance(results[0], list):
                 results = results[0]
             
-            # Convert to standardized format
             sentiment_score = 0.0
-            sentiment_label = 'neutral'
             
             for result in results:
                 label = result['label'].lower()
@@ -322,67 +357,85 @@ class SentimentAnalyzer:
                 
                 if 'positive' in label or 'bullish' in label:
                     sentiment_score += score
-                    sentiment_label = 'positive' if score > 0.5 else sentiment_label
                 elif 'negative' in label or 'bearish' in label:
                     sentiment_score -= score
-                    sentiment_label = 'negative' if score > 0.5 else sentiment_label
             
-            # Normalize score to -1 to 1 range
             sentiment_score = max(-1.0, min(1.0, sentiment_score))
+            
+            sentiment_label = self.get_enhanced_sentiment_label(sentiment_score)
             
             return sentiment_score, sentiment_label
             
         except Exception as e:
             logger.error(f"Error in sentiment analysis: {str(e)}")
-            return 0.0, 'neutral'
+            return 0.0, 'Neutral'
     
     def analyze_ticker_sentiment(self, ticker):
         """
         Analyze overall sentiment for a ticker based on recent news
+        Uses time-weighted scoring for more accurate current sentiment
         """
         try:
-            # Fetch news headlines
             articles = self.fetch_news_headlines(ticker)
             
             if not articles:
                 return None
             
-            # If articles don't have sentiment yet, analyze them
             if 'sentiment' not in articles[0]:
                 analyzed_articles = []
+                total_weighted_score = 0.0
+                total_weights = 0.0
+                
                 for article in articles:
-                    # Combine title and summary for analysis
                     text = f"{article['title']} {article['summary']}"
                     sentiment_score, sentiment_label = self.analyze_sentiment(text)
                     
+                    time_weight = self.calculate_time_weight(article['published'])
+                    weighted_score = sentiment_score * time_weight
+                    
                     article['sentiment'] = sentiment_score
                     article['sentiment_label'] = sentiment_label
+                    article['time_weight'] = time_weight
+                    article['weighted_score'] = weighted_score
+                    
+                    total_weighted_score += weighted_score
+                    total_weights += time_weight
+                    
                     analyzed_articles.append(article)
                     
-                    # Cache the sentiment data
                     self._cache_sentiment_data(article)
                 
                 articles = analyzed_articles
+            else:
+                total_weighted_score = sum(article.get('weighted_score', 0) for article in articles)
+                total_weights = sum(article.get('time_weight', 1) for article in articles)
             
-            # Calculate overall sentiment
             sentiment_scores = [article['sentiment'] for article in articles]
             overall_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0.0
             
-            # Count sentiment categories
-            positive_count = sum(1 for score in sentiment_scores if score > 0.1)
-            negative_count = sum(1 for score in sentiment_scores if score < -0.1)
-            neutral_count = len(sentiment_scores) - positive_count - negative_count
+            weighted_sentiment = total_weighted_score / total_weights if total_weights > 0 else 0.0
             
-            # Cache the summary
-            self._cache_sentiment_summary(ticker, overall_sentiment, positive_count, negative_count, neutral_count, len(articles))
+            sentiment_counts = self._count_enhanced_sentiment_categories(articles)
+            
+            overall_label = self.get_enhanced_sentiment_label(weighted_sentiment)
+            
+            self._cache_enhanced_sentiment_summary(
+                ticker, overall_sentiment, weighted_sentiment, overall_label, 
+                sentiment_counts, len(articles)
+            )
             
             return {
                 'ticker': ticker,
-                'overall_sentiment': overall_sentiment,
-                'sentiment_label': self._get_sentiment_label(overall_sentiment),
-                'positive_count': positive_count,
-                'negative_count': negative_count,
-                'neutral_count': neutral_count,
+                'overall_sentiment': overall_sentiment,  
+                'weighted_sentiment': weighted_sentiment, 
+                'sentiment_label': overall_label,
+                'positive_count': sentiment_counts['positive'],
+                'negative_count': sentiment_counts['negative'], 
+                'neutral_count': sentiment_counts['neutral'],
+                'very_positive_count': sentiment_counts['very_positive'],
+                'slightly_positive_count': sentiment_counts['slightly_positive'],
+                'slightly_negative_count': sentiment_counts['slightly_negative'],
+                'very_negative_count': sentiment_counts['very_negative'],
                 'total_articles': len(articles),
                 'headlines': articles
             }
@@ -391,23 +444,46 @@ class SentimentAnalyzer:
             logger.error(f"Error analyzing sentiment for {ticker}: {str(e)}")
             return None
     
-    def _get_sentiment_label(self, score):
-        """Convert sentiment score to label"""
-        if score > 0.1:
-            return 'Positive'
-        elif score < -0.1:
-            return 'Negative'
-        else:
-            return 'Neutral'
+    def _count_enhanced_sentiment_categories(self, articles):
+        """Count articles by enhanced sentiment categories"""
+        counts = {
+            'very_positive': 0,
+            'slightly_positive': 0,
+            'neutral': 0,
+            'slightly_negative': 0,
+            'very_negative': 0,
+            'positive': 0,  
+            'negative': 0   
+        }
+        
+        for article in articles:
+            label = article.get('sentiment_label', 'Neutral').lower()
+            
+            if 'very positive' in label:
+                counts['very_positive'] += 1
+                counts['positive'] += 1
+            elif 'slightly positive' in label:
+                counts['slightly_positive'] += 1
+                counts['positive'] += 1
+            elif 'neutral' in label:
+                counts['neutral'] += 1
+            elif 'slightly negative' in label:
+                counts['slightly_negative'] += 1
+                counts['negative'] += 1
+            elif 'very negative' in label:
+                counts['very_negative'] += 1
+                counts['negative'] += 1
+        
+        return counts
     
     def _cache_sentiment_data(self, article):
-        """Cache individual article sentiment data"""
+        """Cache individual article sentiment data with enhanced fields"""
         conn = sqlite3.connect(self.db_path)
         
         conn.execute('''
             INSERT OR REPLACE INTO news_sentiment 
-            (ticker, title, summary, url, source, published, sentiment_score, sentiment_label)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (ticker, title, summary, url, source, published, sentiment_score, sentiment_label, time_weight, weighted_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             article['ticker'],
             article['title'],
@@ -416,21 +492,32 @@ class SentimentAnalyzer:
             article['source'],
             article['published'].isoformat() if article['published'] else None,
             article['sentiment'],
-            article['sentiment_label']
+            article['sentiment_label'],
+            article.get('time_weight', 1.0),
+            article.get('weighted_score', article['sentiment'])
         ))
         
         conn.commit()
         conn.close()
     
-    def _cache_sentiment_summary(self, ticker, overall_sentiment, positive_count, negative_count, neutral_count, total_articles):
-        """Cache ticker sentiment summary"""
+    def _cache_enhanced_sentiment_summary(self, ticker, overall_sentiment, weighted_sentiment, 
+                                        sentiment_label, sentiment_counts, total_articles):
+        """Cache ticker sentiment summary with enhanced data"""
         conn = sqlite3.connect(self.db_path)
         
         conn.execute('''
             INSERT OR REPLACE INTO ticker_sentiment_summary 
-            (ticker, overall_sentiment, positive_count, negative_count, neutral_count, total_articles)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (ticker, overall_sentiment, positive_count, negative_count, neutral_count, total_articles))
+            (ticker, overall_sentiment, weighted_sentiment, sentiment_label, positive_count, negative_count, 
+             neutral_count, very_positive_count, slightly_positive_count, slightly_negative_count, 
+             very_negative_count, total_articles)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            ticker, overall_sentiment, weighted_sentiment, sentiment_label,
+            sentiment_counts['positive'], sentiment_counts['negative'], sentiment_counts['neutral'],
+            sentiment_counts['very_positive'], sentiment_counts['slightly_positive'],
+            sentiment_counts['slightly_negative'], sentiment_counts['very_negative'],
+            total_articles
+        ))
         
         conn.commit()
         conn.close()
@@ -451,12 +538,16 @@ class SentimentAnalyzer:
     def get_sentiment_trends(self, ticker, days=7):
         """
         Get sentiment trends over the past few days
+        Now includes both traditional and time-weighted trends
         """
         try:
             conn = sqlite3.connect(self.db_path)
             
             query = '''
-                SELECT DATE(created_at) as date, AVG(sentiment_score) as avg_sentiment, COUNT(*) as article_count
+                SELECT DATE(created_at) as date, 
+                       AVG(sentiment_score) as avg_sentiment,
+                       AVG(weighted_score) as avg_weighted_sentiment,
+                       COUNT(*) as article_count
                 FROM news_sentiment 
                 WHERE ticker = ? AND created_at >= date('now', '-{} days')
                 GROUP BY DATE(created_at)
@@ -471,3 +562,42 @@ class SentimentAnalyzer:
         except Exception as e:
             logger.error(f"Error getting sentiment trends for {ticker}: {str(e)}")
             return pd.DataFrame()
+    
+    def format_article_with_link(self, article):
+        """
+        Format article with 'Read full news' link that opens in new tab
+        Returns formatted string for display
+        """
+        title = article.get('title', 'No title')
+        sentiment_label = article.get('sentiment_label', 'Neutral')
+        sentiment_score = article.get('sentiment_score', 0)
+        source = article.get('source', 'Unknown')
+        published = article.get('published')
+        url = article.get('url', '')
+        time_weight = article.get('time_weight', 1.0)
+        
+        if published:
+            if isinstance(published, str):
+                try:
+                    published = datetime.fromisoformat(published)
+                except:
+                    pass
+            
+            if isinstance(published, datetime):
+                published_str = published.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                published_str = str(published)
+        else:
+            published_str = 'Unknown'
+        
+        formatted_article = {
+            'title': title,
+            'sentiment': f"{sentiment_score:.3f}",
+            'sentiment_label': sentiment_label,
+            'source': source,
+            'published': published_str,
+            'time_weight': f"{time_weight:.1%}", 
+            'read_full_link': f'<a href="{url}" target="_blank" rel="noopener noreferrer">Read full news</a>' if url else 'No link available'
+        }
+        
+        return formatted_article
