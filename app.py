@@ -746,8 +746,10 @@ def display_technical_analysis(ticker, period):
         st.info("Please try refreshing the page or contact support if the issue persists.")
 
 def display_sentiment_analysis(ticker):
-    """Display sentiment analysis results"""
+    """Enhanced sentiment analysis display with time-weighted scoring and better UI"""
     try:
+        from modules.sentiment_module.sentiment_analyzer import SentimentAnalyzer
+        
         sentiment_analyzer = SentimentAnalyzer()
         sentiment_data = sentiment_analyzer.analyze_ticker_sentiment(ticker)
         
@@ -755,26 +757,158 @@ def display_sentiment_analysis(ticker):
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                st.subheader("Overall Sentiment")
-                sentiment_score = sentiment_data.get('overall_sentiment', 0)
-                sentiment_label = "Positive" if sentiment_score > 0.1 else "Negative" if sentiment_score < -0.1 else "Neutral"
+                st.subheader("📊 Overall Sentiment")
                 
-                st.metric("Sentiment Score", f"{sentiment_score:.3f}")
-                st.metric("Sentiment", sentiment_label)
+                weighted_sentiment = sentiment_data.get('weighted_sentiment', 0)
+                traditional_sentiment = sentiment_data.get('overall_sentiment', 0)
+                sentiment_label = sentiment_data.get('sentiment_label', 'Neutral')
+                
+                st.metric(
+                    "Current Sentiment Score", 
+                    f"{weighted_sentiment:.3f}",
+                    help="Time-weighted sentiment (recent news has more impact)"
+                )
+                
+                if 'Very Positive' in sentiment_label:
+                    st.success(f"🟢 **{sentiment_label}**")
+                elif 'Slightly Positive' in sentiment_label:
+                    st.success(f"🟡 **{sentiment_label}**")
+                elif 'Neutral' in sentiment_label:
+                    st.info(f"⚪ **{sentiment_label}**")
+                elif 'Slightly Negative' in sentiment_label:
+                    st.warning(f"🟠 **{sentiment_label}**")
+                elif 'Very Negative' in sentiment_label:
+                    st.error(f"🔴 **{sentiment_label}**")
+                
+                st.caption(f"Traditional Score: {traditional_sentiment:.3f}")
+                
+                st.markdown("---")
+                st.subheader("📈 Sentiment Breakdown")
+                
+                very_positive = sentiment_data.get('very_positive_count', 0)
+                slightly_positive = sentiment_data.get('slightly_positive_count', 0)
+                neutral = sentiment_data.get('neutral_count', 0)
+                slightly_negative = sentiment_data.get('slightly_negative_count', 0)
+                very_negative = sentiment_data.get('very_negative_count', 0)
+                total = sentiment_data.get('total_articles', 1)
+                
+                col_metrics = st.columns(3)
+                with col_metrics[0]:
+                    st.metric("Positive", very_positive + slightly_positive, f"{((very_positive + slightly_positive)/total)*100:.0f}%")
+                with col_metrics[1]:
+                    st.metric("Neutral", neutral, f"{(neutral/total)*100:.0f}%")
+                with col_metrics[2]:
+                    st.metric("Negative", slightly_negative + very_negative, f"{((slightly_negative + very_negative)/total)*100:.0f}%")
+                
+                with st.expander("🕒 Time Weighting Info", expanded=False):
+                    st.markdown("""
+                    **How Time Weighting Works:**
+                    - Today's news: **100%** weight
+                    - Yesterday's news: **80%** weight  
+                    - Last week's news: **30%** weight
+                    - Last month's news: **10%** weight
+                    - Older news: **5%** weight
+                    
+                    This ensures recent market sentiment is prioritized over older news.
+                    """)
             
             with col2:
-                st.subheader("Recent News Headlines")
+                st.subheader("📰 Recent News Headlines")
+                
                 headlines = sentiment_data.get('headlines', [])
-                for headline in headlines[:10]:
-                    with st.expander(headline['title'][:100] + "..."):
-                        st.write(f"**Sentiment:** {headline['sentiment']:.3f}")
-                        st.write(f"**Source:** {headline['source']}")
-                        st.write(f"**Published:** {headline['published']}")
+                if headlines:
+                    st.markdown("**Filter by Sentiment:**")
+                    filter_col1, filter_col2 = st.columns(2)
+                    
+                    with filter_col1:
+                        show_positive = st.checkbox("Positive News", value=True)
+                        show_neutral = st.checkbox("Neutral News", value=True)
+                    
+                    with filter_col2:
+                        show_negative = st.checkbox("Negative News", value=True)
+                        sort_by_time = st.checkbox("Sort by Time Weight", value=True)
+                    
+                    filtered_headlines = []
+                    for headline in headlines:
+                        sentiment_label = headline.get('sentiment_label', 'Neutral').lower()
+                        
+                        include = False
+                        if show_positive and ('positive' in sentiment_label):
+                            include = True
+                        elif show_neutral and ('neutral' in sentiment_label):
+                            include = True
+                        elif show_negative and ('negative' in sentiment_label):
+                            include = True
+                        
+                        if include:
+                            filtered_headlines.append(headline)
+                    
+                    if sort_by_time:
+                        filtered_headlines.sort(key=lambda x: x.get('time_weight', 0), reverse=True)
+                    else:
+                        filtered_headlines.sort(key=lambda x: x.get('published', datetime.min), reverse=True)
+                    
+                    for i, headline in enumerate(filtered_headlines[:50], 1):
+                        formatted_article = sentiment_analyzer.format_article_with_link(headline)
+                        
+                        with st.expander(f"{i}. {formatted_article['title'][:80]}..." if len(formatted_article['title']) > 80 else f"{i}. {formatted_article['title']}"):
+                            
+                            detail_col1, detail_col2 = st.columns(2)
+                            
+                            with detail_col1:
+                                sentiment_label = formatted_article['sentiment_label']
+                                if 'Very Positive' in sentiment_label:
+                                    st.markdown(f"**Sentiment:** :green[{sentiment_label}] ")
+                                elif 'Slightly Positive' in sentiment_label:
+                                    st.markdown(f"**Sentiment:** :green[{sentiment_label}] ")
+                                elif 'Neutral' in sentiment_label:
+                                    st.markdown(f"**Sentiment:** :gray[{sentiment_label}] ")
+                                elif 'Slightly Negative' in sentiment_label:
+                                    st.markdown(f"**Sentiment:** :orange[{sentiment_label}] ")
+                                elif 'Very Negative' in sentiment_label:
+                                    st.markdown(f"**Sentiment:** :red[{sentiment_label}] ")
+                                
+                                st.markdown(f"**Source:** {formatted_article['source']}")
+                            
+                            with detail_col2:
+                                st.markdown(f"**Published:** {formatted_article['published']}")
+                                st.markdown(f"**Time Weight:** {formatted_article['time_weight']}")
+                            
+                            st.markdown("---")
+                            st.markdown(formatted_article['read_full_link'], unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    st.info(f"📊 Showing {len(filtered_headlines)} of {len(headlines)} articles • Time-weighted sentiment analysis active")
+                else:
+                    st.warning("No recent news headlines found for sentiment analysis.")
+                    st.info("""
+                    **Possible reasons:**
+                    - No recent news available for this ticker
+                    - News APIs temporarily unavailable
+                    - Ticker symbol might not have recent coverage
+                    
+                    **Try:**
+                    - Different ticker symbol (AAPL, MSFT, GOOGL)
+                    - Refresh the page
+                    - Check back later for updated news
+                    """)
         else:
-            st.info("No recent news found for sentiment analysis.")
+            st.warning(f"No sentiment data available for {ticker}")
+            st.info("""
+            **Unable to analyze sentiment for this ticker.**
+            
+            This could be because:
+            - No recent news articles found
+            - Ticker symbol not recognized
+            - Sentiment analysis APIs temporarily unavailable
+            
+            **Try these popular tickers:**
+            AAPL, MSFT, GOOGL, AMZN, TSLA, META, NVDA, NFLX
+            """)
             
     except Exception as e:
         st.error(f"Error in sentiment analysis: {str(e)}")
+        st.info("Please try refreshing the page or contact support if the issue persists.")
 
 def display_chatbot(ticker):
     """Display AI chatbot interface"""
