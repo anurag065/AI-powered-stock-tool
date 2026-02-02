@@ -15,7 +15,7 @@ sys.path.append(str(project_root))
 from modules.data_module.data_fetcher import DataFetcher
 from modules.indicator_dashboard.technical_analysis import TechnicalAnalysis
 from modules.sentiment_module.sentiment_analyzer import SentimentAnalyzer
-from modules.chatbot_module.rag_chatbot import EnhancedOpenAIChatbot
+from modules.chatbot_module.enhanced_rag_chatbot import EnhancedRAGChatbot
 from modules.utils.finnhub_client import get_finnhub_client
 from utils.database import DatabaseManager
 
@@ -911,57 +911,188 @@ def display_sentiment_analysis(ticker):
         st.info("Please try refreshing the page or contact support if the issue persists.")
 
 def display_chatbot(ticker):
-    """Display AI chatbot interface"""
+    """Display enhanced AI chatbot interface with modern UI"""
     try:
-        # Initialize chatbot
-        if 'chatbot' not in st.session_state:
-            st.session_state.chatbot = EnhancedOpenAIChatbot()
-        
+        # Initialize enhanced chatbot
+        if 'enhanced_chatbot' not in st.session_state:
+            with st.spinner("Initializing AI Assistant..."):
+                st.session_state.enhanced_chatbot = EnhancedRAGChatbot()
+
         # Chat history
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
-        
+
+        # Custom CSS for chat interface
+        st.markdown("""
+        <style>
+            .chat-container {
+                max-height: 500px;
+                overflow-y: auto;
+                padding: 1rem;
+                border-radius: 10px;
+                background-color: #f8f9fa;
+            }
+            .user-message {
+                background-color: #007bff;
+                color: white;
+                padding: 0.75rem 1rem;
+                border-radius: 15px 15px 5px 15px;
+                margin: 0.5rem 0;
+                max-width: 80%;
+                margin-left: auto;
+            }
+            .assistant-message {
+                background-color: #e9ecef;
+                color: #212529;
+                padding: 0.75rem 1rem;
+                border-radius: 15px 15px 15px 5px;
+                margin: 0.5rem 0;
+                max-width: 80%;
+            }
+            .source-badge {
+                display: inline-block;
+                padding: 0.2rem 0.5rem;
+                margin: 0.2rem;
+                background-color: #17a2b8;
+                color: white;
+                border-radius: 10px;
+                font-size: 0.75rem;
+            }
+            .suggested-question {
+                background-color: #fff;
+                border: 1px solid #dee2e6;
+                padding: 0.5rem 1rem;
+                border-radius: 20px;
+                margin: 0.25rem;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .suggested-question:hover {
+                background-color: #007bff;
+                color: white;
+                border-color: #007bff;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Header with status
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**Analyzing: {ticker}** - Ask any question about this stock")
+        with col2:
+            if st.button("Clear Chat", key="clear_chat", type="secondary"):
+                st.session_state.chat_history = []
+                if 'enhanced_chatbot' in st.session_state:
+                    st.session_state.enhanced_chatbot.clear_history()
+                st.rerun()
+
+        # Suggested questions
+        if not st.session_state.chat_history:
+            st.markdown("**Suggested Questions:**")
+            suggestions = [
+                f"What's the current price and trend for {ticker}?",
+                f"Show me the technical analysis for {ticker}",
+                f"What's the market sentiment for {ticker}?",
+                f"Give me a comprehensive analysis of {ticker}"
+            ]
+
+            cols = st.columns(2)
+            for i, suggestion in enumerate(suggestions):
+                with cols[i % 2]:
+                    if st.button(suggestion, key=f"suggest_{i}", use_container_width=True):
+                        st.session_state.pending_question = suggestion
+                        st.rerun()
+
+        st.divider()
+
         # Display chat history
         chat_container = st.container()
         with chat_container:
             for message in st.session_state.chat_history:
-                with st.chat_message(message["role"]):
-                    st.write(message["content"])
+                with st.chat_message(message["role"], avatar="user" if message["role"] == "user" else "assistant"):
+                    st.markdown(message["content"])
+
+                    # Show sources if available
+                    if message.get("sources"):
+                        with st.expander("Data Sources", expanded=False):
+                            for source in message["sources"]:
+                                st.markdown(f"- {source}")
+
+        # Show performance metrics
+        if st.session_state.chat_history:
+            with st.expander("Performance Metrics", expanded=False):
+                history = st.session_state.enhanced_chatbot.get_conversation_history(ticker, limit=5)
+                if history:
+                    avg_time = sum(h.get('response_time_ms', 0) for h in history) / len(history)
+                    st.metric("Avg Response Time", f"{avg_time:.0f}ms")
 
     except Exception as e:
-        st.error(f"Error in chatbot: {str(e)}")
+        st.error(f"Error initializing chatbot: {str(e)}")
+        st.info("Please refresh the page to try again.")
 
 
 def handle_chat_input(ticker):
-    """Handle chat input separately (must be outside tabs)"""
+    """Handle chat input with streaming support (must be outside tabs)"""
     try:
-        # Chat input (must be at root level, not in tabs)
-        user_input = st.chat_input("Ask anything about the stock analysis...")
-        
+        # Check for pending question from suggested questions
+        if 'pending_question' in st.session_state:
+            user_input = st.session_state.pending_question
+            del st.session_state.pending_question
+        else:
+            # Chat input (must be at root level, not in tabs)
+            user_input = st.chat_input("Ask anything about the stock analysis...")
+
         if user_input:
-            # Initialize chatbot if not exists
-            if 'chatbot' not in st.session_state:
-                st.session_state.chatbot = EnhancedOpenAIChatbot()
+            # Initialize enhanced chatbot if not exists
+            if 'enhanced_chatbot' not in st.session_state:
+                st.session_state.enhanced_chatbot = EnhancedRAGChatbot()
 
             # Initialize chat history if not exists
             if 'chat_history' not in st.session_state:
                 st.session_state.chat_history = []
 
             # Add user message to history
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            
-            # Get bot response
-            with st.spinner("Analyzing..."):
-                response = st.session_state.chatbot.get_response(user_input, ticker)
-            
+            st.session_state.chat_history.append({
+                "role": "user",
+                "content": user_input
+            })
+
+            # Create placeholder for streaming response
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = ""
+
+                # Show typing indicator
+                message_placeholder.markdown("Analyzing...")
+
+                try:
+                    # Use streaming for real-time response
+                    for chunk in st.session_state.enhanced_chatbot.get_streaming_response(user_input, ticker):
+                        full_response += chunk
+                        # Update display with cursor effect
+                        message_placeholder.markdown(full_response + "")
+
+                    # Final update without cursor
+                    message_placeholder.markdown(full_response)
+
+                except Exception as stream_error:
+                    # Fallback to non-streaming if streaming fails
+                    full_response = st.session_state.enhanced_chatbot.get_response(user_input, ticker)
+                    message_placeholder.markdown(full_response)
+
             # Add bot response to history
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
-            
-            # Rerun to display new messages
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": full_response,
+                "sources": ["Real-time Market Data", "Technical Analysis", "Sentiment Analysis", "SEC Filings"]
+            })
+
+            # Rerun to update UI properly
             st.rerun()
-            
+
     except Exception as e:
         st.error(f"Error in chatbot: {str(e)}")
+        st.info("Please try again or refresh the page.")
 
 if __name__ == "__main__":
     main()
