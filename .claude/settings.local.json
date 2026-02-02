@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(dir:*)",
+      "Bash(powershell -Command \"Get-ChildItem -Directory -Recurse | Select-Object -ExpandProperty FullName\")",
+      "Bash(python -m py_compile:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
